@@ -1,94 +1,18 @@
 import random
 import re
+import csv
+import logging
 
 """"
-    Name: Monopoly Library (Board and Cards)
+    Name: Monopoly Library (Board, Cards and Player)
     Author: Scott Y
     Date: 11 July 2021
     Description: To create a library which can mimic the Monopoly board and cards
 """
 
 
-class Monopoly:
-
-    def __init__(self, board_file_instance, jail_length = 3):
-        self.board_file = self.board_processing(board_file_instance)
-        self.number_tiles = len(self.board_file)
-        self.jail_length = jail_length
-
-    @staticmethod
-    def board_processing(board_file):
-        with open(board_file, 'r') as f:
-            board_data_dump = f.readlines()
-
-        colour_dump = [item.strip() for item in board_data_dump[1].split(',')]
-        location_dump = [item.strip().title() for item in board_data_dump[0].split(',')]
-
-        board_dict = dict(enumerate(zip(location_dump, colour_dump)))
-
-        return board_dict
-
-    def get_action(self, position, roll, jail_state, jail_turn):
-
-        """Provides action for player by returning:
-        (position, jail_state)"""
-
-        # Initiliase standard parameters
-        current_location = self.board_file[position]
-
-        # Initialise outputs
-        output_position = int()
-        output_jail_state = bool()
-
-        # Check if in jail
-        if jail_state:
-
-            # If player rolls a double
-            if len(set(roll)) == 1:
-
-                output_jail_state = False
-                output_position = (position + roll) % self.number_tiles
-
-            elif jail_turn == 3:
-
-                output_jail_state = False
-
-        # Check if Go to Jail
-        if re.match(r'.*(to jail).*', current_location, flags=re.I):
-
-            output_position = 30 # hard key for now
-            output_jail_state = True
-
-        # Check if Chance or Community Chest
-        if current_location.lower == 'chance':
-            
-
-
-        elif current_location.lower == 'community chest':
-
-
-        return output_position, output_jail_state
-
-
-class Player:
-    pass
-
-
-class Cards:
-
-    def __init__(self, chance_file_instance, comm_file_instance):
-
-        pass
-
-    def card_processing(self, card_file):
-
-        with open(card_file, 'r') as f:
-
-            card_dump = f.readlines()
-
-        
-            
-
+# TODO implement all money features
+# TODO unhardkey jail location??
 
 class Dice:
     """Simple Dice class to simulate dice roll"""
@@ -106,9 +30,246 @@ class Dice:
         return sum(total_rolls), total_rolls
 
 
+class Monopoly:
+    """Monopoly class. Holds instance of game. Game will keep track of state of houses, actions for players,
+    and cards (holding sequence and also card interpretation). Note, Player class keeps track of player state items (
+    position, jail state, money) """
+
+    def __init__(self, board_file_instance, chance_cards, community_cards, jail_length=3):
+        self.board_file = self.board_processing(board_file_instance)
+        self.number_tiles = len(self.board_file)
+        self.jail_length = jail_length
+
+        self.chance_cards = CardCollection('Chance', chance_cards)
+        self.community_cards = CardCollection('Community Cards', community_cards)
+
+    @staticmethod
+    # TODO: change boardprocessing to process .csv file instead like the cards
+    def board_processing(board_file):
+        with open(board_file, 'r') as f:
+            board_data_dump = f.readlines()
+
+        colour_dump = [item.strip() for item in board_data_dump[1].split(',')]
+        location_dump = [item.strip().title() for item in board_data_dump[0].split(',')]
+
+        board_dict = dict(enumerate(zip(location_dump, colour_dump)))
+
+        return board_dict
+
+    def get_action(self, position, roll, jail_state, jail_turn):
+
+        """Provides action for player by returning:
+        (position, jail_state, jail_turn)
+        :rtype: tuple(int, bool, int)"""
+
+        # Initialise standard parameters
+        current_location = self.board_file[position]
+
+        # Initialise outputs
+        output_position = position
+        output_jail_state = jail_state
+
+        # Check if in jail
+        if jail_state:
+
+            # If player rolls a double
+            if len(set(roll[1])) == 1:
+
+                output_jail_state = False
+                output_position = (position + roll[0]) % self.number_tiles
+                jail_turn = 0
+
+            elif jail_turn == 3:
+
+                output_jail_state = False
+                jail_turn = 0
+
+            else:
+
+                jail_turn += 1
+
+        # Check if Go to Jail
+        if re.match(r'.*(to jail).*', current_location[0], flags=re.I):
+            output_position = 30  # hard key for now
+            output_jail_state = True
+
+        # Check if Chance or Community Chest
+        if current_location[0].lower() == 'chance':
+
+            current_card = self.chance_cards.next_card()
+
+            output_position, output_jail_state = self.card_action(current_card, position)
+
+        elif current_location[0].lower() == 'community chest':
+
+            current_card = self.community_cards.next_card()
+
+            output_position, output_jail_state = self.card_action(current_card, position)
+
+        return output_position, output_jail_state, jail_turn
+
+    def card_action(self, card, position):
+
+        # Initialise output variables
+        card_position = int()
+        card_jail_state = False
+        # card_money_delta = int()
+
+        if card.card_type == 'move':
+
+            # TODO haven't implemented if we pass go, but maybe can implement in player??
+            if card.move_type == 'loc':
+
+                # TODO: think about implementing a dual-side dictionary for ease (note that this is one to many)
+
+                # If we're searching for location, search dictionary and use first part of tuple
+                # as remember our dictionary format is {location_num:(name, type)}
+
+                loc_idx = val_search(self.board_file, card.move_loc, idx=0)
+
+                if loc_idx is None:
+                    raise ValueError('Could not find location of Card in Board')
+                else:
+                    card_position = loc_idx
+
+            elif card.move_type == 'num':
+
+                card_position = position + int(card.move_loc)
+
+            elif card.move_type == 'type':
+                # type means search for next station or utilities
+                # if type, we need to check current position and move only forwards
+
+                i = 0
+                found = False
+                while i <= self.number_tiles and not found:
+                    test_position = (position + i) % self.number_tiles
+                    loc_idx = val_search(self.board_file, card.move_loc, idx=1)
+
+                    if loc_idx is not None:
+                        card_position = loc_idx
+                        found = True
+
+                    i += 1
+
+                if not found:
+                    raise ValueError('Could not find station or utility')
+
+        elif card.card_type == 'go_jail':
+
+            card_jail_state = True
+            card_position = 30
+
+        # elif card.card_type == 'jail_free':
+        # TODO implement later
+
+        return card_position, card_jail_state
+
+
+class Player:
+    """Player class which keeps track of player state items such as player position,
+    player jail state, player money"""
+
+    player_dice = Dice(2)
+
+    def __init__(self, player_name, board: Monopoly, start_money=1500):
+        self.player_name = player_name
+        self.money = start_money
+        self.board = board
+        self.jail_state = False
+        self.jail_turn = 0
+        self.position = 0
+
+    def roll_turn(self):
+        current_roll = Player.player_dice.roll()
+
+        self.position = (self.position + current_roll[0]) % self.board.number_tiles
+
+        self.position, self.jail_state, self.jail_turn = self.board.get_action(self.position, current_roll,
+                                                                               self.jail_state, self.jail_turn)
+        return self.position
+
+
+class CardCollection:
+    """Stack-like datatype to hold all Cards for a collection"""
+
+    def __init__(self, collection_name, collection_file_instance, shuffle=True):
+
+        self.collection_name = collection_name
+        self.collection_cards = self.card_processing(collection_file_instance)
+
+        # Shuffle cards
+
+        if shuffle: random.shuffle(self.collection_cards)
+
+    def next_card(self):
+
+        # Pop last card out
+        temp = self.collection_cards.pop()
+
+        # Insert into front of deck
+        self.collection_cards.insert(0, temp)
+
+        return temp
+
+    @staticmethod
+    def card_processing(file):
+
+        # Initialise variables
+        card_dump = list()
+        output_collection = list()
+
+        with open(file, newline='') as f:
+
+            card_csv = csv.reader(f)
+
+            for row in card_csv:
+                card_dump.append(row)
+
+        for row in card_dump:
+            # Process so that empty strings become None datatypes
+            row_wth_Nones = [None if i in row == '' else i for i in row]
+
+            output_collection.append(Card(row_wth_Nones[0], row_wth_Nones[1], row_wth_Nones[2], row_wth_Nones[3]))
+
+        return output_collection
+
+
+class Card:
+    """Card class just to store information of cards"""
+
+    def __init__(self, description, card_type, move_type=None, move_loc=None):
+        self.description = description
+        self.card_type = card_type
+        self.move_type = move_type
+        self.move_loc = move_loc
+
+    def __str__(self):
+        return 'Description: {}'.format(self.description)
+
+    def __repr__(self):
+        return '<Card>. Description: {}...'.format(self.description[:20])
+
+
+def val_search(x, val, idx):
+    for key, v in x.items():
+        if re.match('.*(' + val + ').*', v[idx], flags=re.I):
+            return key
+
+
 def main():
-    x = Monopoly('monopoly_board_aus.txt')
-    print(x.board_file)
+    game = Monopoly('monopoly_board_aus.txt', 'monopoly_chance_aus.csv', 'monopoly_community_aus.csv')
+
+    player_1 = Player('scott', game)
+
+    output_list = list()
+    for i in range(5):
+        output_list.append(player_1.roll_turn())
+
+    print(output_list)
+
+
+
 
 
 if __name__ == "__main__":
