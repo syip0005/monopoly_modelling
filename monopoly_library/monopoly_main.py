@@ -2,6 +2,7 @@ import random
 import re
 import csv
 import logging
+logging.basicConfig(filename='player_test.log', encoding='utf-8', level=logging.DEBUG)
 
 """"
     Name: Monopoly Library (Board, Cards and Player)
@@ -62,6 +63,8 @@ class Monopoly:
         (position, jail_state, jail_turn)
         :rtype: tuple(int, bool, int)"""
 
+        logging.info('current position: {}'.format(position))
+
         # Initialise standard parameters
         current_location = self.board_file[position]
 
@@ -72,6 +75,10 @@ class Monopoly:
         # Check if in jail
         if jail_state:
 
+            output_position = position - roll[0]
+
+            logging.info('in jail')
+
             # If player rolls a double
             if len(set(roll[1])) == 1:
 
@@ -79,7 +86,9 @@ class Monopoly:
                 output_position = (position + roll[0]) % self.number_tiles
                 jail_turn = 0
 
-            elif jail_turn == 3:
+                logging.info('rolled a double, going to position {}'.format(output_position))
+
+            elif jail_turn == self.jail_length - 1:
 
                 output_jail_state = False
                 jail_turn = 0
@@ -88,9 +97,11 @@ class Monopoly:
 
                 jail_turn += 1
 
+            return output_position, output_jail_state, jail_turn
+
         # Check if Go to Jail
         if re.match(r'.*(to jail).*', current_location[0], flags=re.I):
-            output_position = 30  # hard key for now
+            output_position = 10  # hard key for now
             output_jail_state = True
 
         # Check if Chance or Community Chest
@@ -111,9 +122,11 @@ class Monopoly:
     def card_action(self, card, position):
 
         # Initialise output variables
-        card_position = int()
+        card_position = position
         card_jail_state = False
         # card_money_delta = int()
+
+        logging.info('hit a card, card is {}'.format(card.description))
 
         if card.card_type == 'move':
 
@@ -140,17 +153,12 @@ class Monopoly:
                 # type means search for next station or utilities
                 # if type, we need to check current position and move only forwards
 
-                i = 0
                 found = False
-                while i <= self.number_tiles and not found:
-                    test_position = (position + i) % self.number_tiles
-                    loc_idx = val_search(self.board_file, card.move_loc, idx=1)
-
+                while not found:
+                    loc_idx = val_search(self.board_file, card.move_loc, idx=1, start_pos=position)
                     if loc_idx is not None:
                         card_position = loc_idx
                         found = True
-
-                    i += 1
 
                 if not found:
                     raise ValueError('Could not find station or utility')
@@ -158,7 +166,7 @@ class Monopoly:
         elif card.card_type == 'go_jail':
 
             card_jail_state = True
-            card_position = 30
+            card_position = 10
 
         # elif card.card_type == 'jail_free':
         # TODO implement later
@@ -183,10 +191,14 @@ class Player:
     def roll_turn(self):
         current_roll = Player.player_dice.roll()
 
+        logging.info('start position: {}, name: {}, injail: {}'.format(self.position, self.board.board_file[self.position], self.jail_state))
+
         self.position = (self.position + current_roll[0]) % self.board.number_tiles
 
         self.position, self.jail_state, self.jail_turn = self.board.get_action(self.position, current_roll,
                                                                                self.jail_state, self.jail_turn)
+
+        logging.info('end position: {}, name: {}, injail: {}'.format(self.position, self.board.board_file[self.position], self.jail_state))
         return self.position
 
 
@@ -251,10 +263,16 @@ class Card:
         return '<Card>. Description: {}...'.format(self.description[:20])
 
 
-def val_search(x, val, idx):
-    for key, v in x.items():
-        if re.match('.*(' + val + ').*', v[idx], flags=re.I):
-            return key
+def val_search(x, val, idx, start_pos=0):
+    i = 0
+    start_pos = start_pos
+    while i <= len(x):
+        search_pos = (start_pos + i) % len(x)
+        if x[search_pos][idx].lower() == val.lower():
+            return search_pos
+        i += 1
+
+
 
 
 def main():
@@ -263,8 +281,11 @@ def main():
     player_1 = Player('scott', game)
 
     output_list = list()
-    for i in range(5):
+    for i in range(25):
+        logging.info('turn number: {}'.format(i))
         output_list.append(player_1.roll_turn())
+
+    print(game.board_file)
 
     print(output_list)
 

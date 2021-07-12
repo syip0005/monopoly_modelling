@@ -11,6 +11,6 @@ Go Back 3 Spaces,move,num,-3
 "Go to Jail. Go directly to Jail, do not pass Go, do not collect £200",go_jail,,
 Make general repairs on all your property. For each house pay £25. For each hotel pay £100,money,,
 Speeding fine £15,money,,
-"Take a trip to Kings Cross Station. If you pass Go, collect £200",move,loc,kings cross
+"Take a trip to Kings Cross Station. If you pass Go, collect £200",move,loc,kings cross station
 You have been elected Chairman of the Board. Pay each player £50,money,,
 Your building loan matures. Collect £150,money,,
