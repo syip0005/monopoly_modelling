@@ -12,7 +12,8 @@ logging.basicConfig(filename='player_test.log', level=logging.DEBUG)
     Description: To create a library which can mimic the Monopoly board and cards
 """
 
-
+# TODO fix jail free card going to the bottom of the deck, technically doesn't
+# TODO fix bug regarding len(4) outputs for player turn
 # TODO implement all money features
 
 class Dice:
@@ -54,6 +55,10 @@ class Monopoly:
         self.chance_cards = CardCollection('Chance', chance_cards)
         self.community_cards = CardCollection('Community Cards', community_cards)
 
+    def refresh_game(self):
+        self.chance_cards.shuffle()
+        self.community_cards.shuffle()
+
     @staticmethod
     # TODO: change boardprocessing to process .csv file instead like the cards
     def board_processing(board_file):
@@ -70,8 +75,8 @@ class Monopoly:
     def get_action(self, position, roll, jail_state, jail_turn):
 
         """Provides action for player by returning:
-        (position, jail_state, jail_turn)
-        :rtype: tuple(int, bool, int)"""
+        (position, jail_state, jail_turn, jail_free_delta)
+        :rtype: tuple(int, bool, int, int)"""
 
         logging.info('current position: {}'.format(position))
 
@@ -81,6 +86,7 @@ class Monopoly:
         # Initialise outputs
         output_position = position
         output_jail_state = jail_state
+        jail_free_delta = 0
 
         # Check if in jail
         if jail_state:
@@ -99,7 +105,7 @@ class Monopoly:
                 logging.info('rolled a double, going to position {}'.format(output_position))
 
                 # get action of latest position (no re-roll) using self call (1 level recurision)
-                output_position, output_jail_state, jail_turn = self.get_action(output_position, roll,
+                output_position, output_jail_state, jail_turn, jail_free_delta = self.get_action(output_position, roll,
                                                                                 output_jail_state, jail_turn)
 
             elif jail_turn == self.jail_length - 1:
@@ -111,7 +117,7 @@ class Monopoly:
 
                 jail_turn += 1
 
-            return output_position, output_jail_state, jail_turn
+            return output_position, output_jail_state, jail_turn, jail_free_delta
 
         # Check if Go to Jail
         if re.match(r'.*(to jail).*', current_location[0], flags=re.I):
@@ -123,21 +129,22 @@ class Monopoly:
 
             current_card = self.chance_cards.next_card()
 
-            output_position, output_jail_state = self.card_action(current_card, position)
+            output_position, output_jail_state, jail_free_delta = self.card_action(current_card, position)
 
         elif current_location[0].lower() == 'community chest':
 
             current_card = self.community_cards.next_card()
 
-            output_position, output_jail_state = self.card_action(current_card, position)
+            output_position, output_jail_state, jail_free_delta = self.card_action(current_card, position)
 
-        return output_position, output_jail_state, jail_turn
+        return output_position, output_jail_state, jail_turn, jail_free_delta
 
     def card_action(self, card, position):
 
         # Initialise output variables
         card_position = position
         card_jail_state = False
+        card_jail_free_delta = 0
         # card_money_delta = int()
 
         logging.info('hit a card, card is {}'.format(card.description))
@@ -182,10 +189,10 @@ class Monopoly:
             card_jail_state = True
             card_position = self.jail_position
 
-        # elif card.card_type == 'jail_free':
-        # TODO implement later
+        elif card.card_type == 'jail_free':
+            card_jail_free_delta = 1
 
-        return card_position, card_jail_state
+        return card_position, card_jail_state, card_jail_free_delta
 
 
 class Player:
@@ -200,8 +207,18 @@ class Player:
         self.jail_turn = 0
         self.position = 0
         self.player_dice = Dice(2)
+        self.jail_free_cards = 0
 
     def roll_turn(self, double_rolls_so_far=0):
+
+        # initliase output variables for all positins
+        output_pos = list()
+
+        # pull us out of jail if we're in jail
+        if self.jail_free_cards >= 1 and self.jail_state:
+            self.jail_free_cards -= 1
+            self.exit_jail_state()
+            logging.info('used jail free card, cards remaining: {}'.format(self.jail_free_cards))
 
         # used to keep track of previous jail state, so we can't prevent rolling again
         prev_jail_state = self.jail_state
@@ -215,31 +232,45 @@ class Player:
         logging.info('roll: {}'.format(current_roll))
 
         logging.info(
-            'start position: {}, name: {}, injail: {}, jailturn: {}'.format(self.position,
+            'start position: {}, name: {}, injail: {}, jailturn: {}, jailfree cards: {}'.format(self.position,
                                                                             self.board.board_file[self.position],
-                                                                            self.jail_state, self.jail_turn))
+                                                                            self.jail_state, self.jail_turn, self.jail_free_cards))
 
         self.position = (self.position + current_roll[0]) % self.board.number_tiles
 
-        self.position, self.jail_state, self.jail_turn = self.board.get_action(self.position, current_roll,
+
+        self.position, self.jail_state, self.jail_turn, jail_free_card_delta = self.board.get_action(self.position, current_roll,
                                                                                self.jail_state, self.jail_turn)
 
+        self.jail_free_cards += jail_free_card_delta
+
         logging.info(
-            'end position: {}, name: {}, injail: {}, jailturn: {}'.format(self.position,
+            'end position: {}, name: {}, injail: {}, jailturn: {}, jailfree cards: {}'.format(self.position,
                                                                           self.board.board_file[self.position],
-                                                                          self.jail_state, self.jail_turn))
+                                                                          self.jail_state, self.jail_turn, self.jail_free_cards))
 
-        if not prev_jail_state and not self.jail_state and len(set(current_roll[1])) == 1:  # if we didn't end up in jail and we rolled a double
-            self.roll_turn(double_rolls_so_far=double_rolls_so_far + 1)
+        output_pos.append(self.position)
 
-        return self.position
+        if not prev_jail_state and not self.jail_state and len(
+                set(current_roll[1])) == 1:  # if we didn't end up in jail and we rolled a double
+            output_pos += self.roll_turn(double_rolls_so_far=double_rolls_so_far + 1)
+
+        return output_pos
 
     def go_jail_state(self):
         self.jail_turn = 0
         self.jail_state = True
         self.position = self.board.jail_position
 
-        return self.position
+        # in order to ensure that this is a list so it can be appended to the recursive list
+        output = list()
+        output.append(self.position)
+
+        return output
+
+    def exit_jail_state(self):
+        self.jail_turn = 0
+        self.jail_state = False
 
 
 class CardCollection:
@@ -263,6 +294,9 @@ class CardCollection:
         self.collection_cards.insert(0, temp)
 
         return temp
+
+    def shuffle(self):
+        random.shuffle(self.collection_cards)
 
     @staticmethod
     def card_processing(file):
@@ -314,16 +348,16 @@ def val_search(x, val, idx, start_pos=0):
 
 
 def main():
-    game = Monopoly('monopoly_board_aus.txt', 'monopoly_chance_aus.csv', 'monopoly_community_aus.csv')
+    game = Monopoly('monopoly_board_aus.txt', 'monopoly_chance_aus.csv', 'monopoly_community_aus.csv', 2)
 
     player_1 = Player('scott', game)
 
     output_list = list()
     for i in range(100):
-
         logging.info('turn number: {}'.format(i))
-        output_list.append(player_1.roll_turn())
-
+        temp = player_1.roll_turn()
+        output_list.append(temp)
+        logging.info('logged number: {}'.format(temp))
 
     print(game.board_file)
 
