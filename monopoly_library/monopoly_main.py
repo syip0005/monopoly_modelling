@@ -2,7 +2,8 @@ import random
 import re
 import csv
 import logging
-logging.basicConfig(filename='player_test.log', encoding='utf-8', level=logging.DEBUG)
+
+logging.basicConfig(filename='player_test.log', level=logging.DEBUG)
 
 """"
     Name: Monopoly Library (Board, Cards and Player)
@@ -13,17 +14,25 @@ logging.basicConfig(filename='player_test.log', encoding='utf-8', level=logging.
 
 
 # TODO implement all money features
-# TODO unhardkey jail location??
 
 class Dice:
     """Simple Dice class to simulate dice roll"""
 
-    def __init__(self, no_dice=2):
+    def __init__(self, no_dice=2, rigged=False, rigged_list=None):
+
         self.no_dice = no_dice
+
+        self.rigged = rigged
+        if rigged_list is None:
+            rigged_list = []
+        self.rigged_list = rigged_list
 
     def roll(self):
         """Roll method to roll dice.
         :returns tuple with integer (total sum) and list (all rolls)"""
+
+        if self.rigged:
+            return sum(self.rigged_list), self.rigged_list
 
         total_rolls = list()
         for i in range(self.no_dice):
@@ -36,10 +45,11 @@ class Monopoly:
     and cards (holding sequence and also card interpretation). Note, Player class keeps track of player state items (
     position, jail state, money) """
 
-    def __init__(self, board_file_instance, chance_cards, community_cards, jail_length=3):
+    def __init__(self, board_file_instance, chance_cards, community_cards, jail_length=3, jail_position=10):
         self.board_file = self.board_processing(board_file_instance)
         self.number_tiles = len(self.board_file)
         self.jail_length = jail_length
+        self.jail_position = jail_position
 
         self.chance_cards = CardCollection('Chance', chance_cards)
         self.community_cards = CardCollection('Community Cards', community_cards)
@@ -77,16 +87,20 @@ class Monopoly:
 
             output_position = position - roll[0]
 
-            logging.info('in jail')
+            logging.info('in jail, jail turn: {}'.format(jail_turn + 1))
 
             # If player rolls a double
             if len(set(roll[1])) == 1:
 
                 output_jail_state = False
-                output_position = (position + roll[0]) % self.number_tiles
+                output_position = (output_position + roll[0]) % self.number_tiles
                 jail_turn = 0
 
                 logging.info('rolled a double, going to position {}'.format(output_position))
+
+                # get action of latest position (no re-roll) using self call (1 level recurision)
+                output_position, output_jail_state, jail_turn = self.get_action(output_position, roll,
+                                                                                output_jail_state, jail_turn)
 
             elif jail_turn == self.jail_length - 1:
 
@@ -101,7 +115,7 @@ class Monopoly:
 
         # Check if Go to Jail
         if re.match(r'.*(to jail).*', current_location[0], flags=re.I):
-            output_position = 10  # hard key for now
+            output_position = self.jail_position
             output_jail_state = True
 
         # Check if Chance or Community Chest
@@ -166,7 +180,7 @@ class Monopoly:
         elif card.card_type == 'go_jail':
 
             card_jail_state = True
-            card_position = 10
+            card_position = self.jail_position
 
         # elif card.card_type == 'jail_free':
         # TODO implement later
@@ -178,8 +192,6 @@ class Player:
     """Player class which keeps track of player state items such as player position,
     player jail state, player money"""
 
-    player_dice = Dice(2)
-
     def __init__(self, player_name, board: Monopoly, start_money=1500):
         self.player_name = player_name
         self.money = start_money
@@ -187,18 +199,46 @@ class Player:
         self.jail_state = False
         self.jail_turn = 0
         self.position = 0
+        self.player_dice = Dice(2)
 
-    def roll_turn(self):
-        current_roll = Player.player_dice.roll()
+    def roll_turn(self, double_rolls_so_far=0):
 
-        logging.info('start position: {}, name: {}, injail: {}'.format(self.position, self.board.board_file[self.position], self.jail_state))
+        # used to keep track of previous jail state, so we can't prevent rolling again
+        prev_jail_state = self.jail_state
+
+        if double_rolls_so_far == 3:  # can only roll 3 doubles
+            logging.info('triple doubles! go to jail')
+            return self.go_jail_state()
+
+        current_roll = self.player_dice.roll()
+
+        logging.info('roll: {}'.format(current_roll))
+
+        logging.info(
+            'start position: {}, name: {}, injail: {}, jailturn: {}'.format(self.position,
+                                                                            self.board.board_file[self.position],
+                                                                            self.jail_state, self.jail_turn))
 
         self.position = (self.position + current_roll[0]) % self.board.number_tiles
 
         self.position, self.jail_state, self.jail_turn = self.board.get_action(self.position, current_roll,
                                                                                self.jail_state, self.jail_turn)
 
-        logging.info('end position: {}, name: {}, injail: {}'.format(self.position, self.board.board_file[self.position], self.jail_state))
+        logging.info(
+            'end position: {}, name: {}, injail: {}, jailturn: {}'.format(self.position,
+                                                                          self.board.board_file[self.position],
+                                                                          self.jail_state, self.jail_turn))
+
+        if not prev_jail_state and not self.jail_state and len(set(current_roll[1])) == 1:  # if we didn't end up in jail and we rolled a double
+            self.roll_turn(double_rolls_so_far=double_rolls_so_far + 1)
+
+        return self.position
+
+    def go_jail_state(self):
+        self.jail_turn = 0
+        self.jail_state = True
+        self.position = self.board.jail_position
+
         return self.position
 
 
@@ -273,24 +313,21 @@ def val_search(x, val, idx, start_pos=0):
         i += 1
 
 
-
-
 def main():
     game = Monopoly('monopoly_board_aus.txt', 'monopoly_chance_aus.csv', 'monopoly_community_aus.csv')
 
     player_1 = Player('scott', game)
 
     output_list = list()
-    for i in range(25):
+    for i in range(100):
+
         logging.info('turn number: {}'.format(i))
         output_list.append(player_1.roll_turn())
+
 
     print(game.board_file)
 
     print(output_list)
-
-
-
 
 
 if __name__ == "__main__":
